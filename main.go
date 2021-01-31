@@ -19,8 +19,12 @@ import (
 )
 
 var (
-	addr   = flag.String("addr", "", "Address to listen on")
-	notify = flag.Bool("notify", false, "Whether to send a notification at startup")
+	addr      = flag.String("addr", "", "Address to listen on")
+	notify    = flag.Bool("notify", false, "Whether to send a notification at startup")
+	forward   = flag.Bool("forward", true, "Whether to forward requests to upstream or blackhole traffic")
+	blackhole = flag.String("blackhole", "127.0.0.1,localhost", "Comma-separated hosts to blackhole")
+
+	blackholeList = map[string]bool{}
 
 	httpClient = http.Client{
 		Timeout:   time.Second * 4,
@@ -248,6 +252,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !*forward || blackholeList[r.Host] {
+		w.WriteHeader(400)
+		return
+	}
+
 	request, err := http.NewRequestWithContext(context.Background(), r.Method, url, r.Body)
 	if err != nil {
 		log.Printf("Error creating upstream request: %v", err)
@@ -277,6 +286,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
+	for _, s := range strings.Split(*blackhole, ",") {
+		blackholeList[s] = true
+	}
+
 	log.Printf("Listening on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, http.HandlerFunc(handler)))
 }
