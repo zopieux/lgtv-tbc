@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -17,7 +19,7 @@ import (
 )
 
 var (
-	addr = flag.String("addr", "", "Address to listen on")
+	addr   = flag.String("addr", "", "Address to listen on")
 	notify = flag.Bool("notify", false, "Whether to send a notification at startup")
 
 	httpClient = http.Client{
@@ -100,7 +102,7 @@ func generateAuthentication() *SdpAuthentication {
 					Whitelist: Whitelist{
 						Checksum: "01010101010101010101010101010101",
 						UpdateYn: "Y",
-						URL:      "http://doesnotexist/",
+						URL:      "http://sne.lge.com/fake-whitelist",
 						Version:  41,
 					},
 				},
@@ -123,14 +125,14 @@ func generateAuthentication() *SdpAuthentication {
 				},
 				EulaList: EulaList{
 					Eulas:             []Eulas{},
-					EulaMergedFileURL: "https://ngfts.lge.com/fts/gftsDownload.lge?biz_code=MEMBERSHIP&func_code=TERMS&file_path=/terms/comp/201808140003_ch_comp.zip",
+					EulaMergedFileURL: "http://ngfts.lge.com/fts/gftsDownload.lge?biz_code=MEMBERSHIP&func_code=TERMS&file_path=/terms/comp/201808140003_ch_comp.zip",
 				},
 				LauncherPromotion: LauncherPromotion{
 					PromotionID:    "",
 					PromotionCount: 0,
 				},
 				ServerDomain: ServerDomain{
-					URL:     "https://ngfts.lge.com/domainurl/webOS4.0/v1.0/server_domain_list_v4.0.json",
+					URL:     "http://ngfts.lge.com/domainurl/webOS4.0/v1.0/server_domain_list_v4.0.json",
 					Version: "1.0",
 				},
 			},
@@ -174,10 +176,58 @@ func generateAuthentication() *SdpAuthentication {
 	return auth
 }
 
+func generateInitServicesResponse(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if bytes, err := json.Marshal(generateAuthentication()); err == nil {
+		w.Write(bytes)
+		log.Print("Sent back no-bloatware /initservices reply")
+	} else {
+		w.WriteHeader(500)
+		log.Printf("Error marshalling: %v", err)
+	}
+}
+
+func generateUpdateResponse(w http.ResponseWriter, r *http.Request) {
+	timeLoc, err := time.LoadLocation("GMT")
+	if err != nil {
+		log.Printf("Could not load GTM TZ: %v", err)
+		w.WriteHeader(500)
+		return
+	}
+	updateResponse := SWUpdateResponse{
+		ResultCode:         "900",
+		Message:            "Success",
+		RequestId:          "00000000080808080808",
+		TimeGTM:            time.Now().In(timeLoc).Format("02 Jan 2006 15:04:05 GMT"),
+		EcoInfo:            "01",
+		ImageURL:           "",
+		ImageSize:          "",
+		ImageName:          "",
+		UpdateMajorVersion: "",
+		UpdateMinorVersion: "",
+		ForceFlag:          "",
+		KE:                 "",
+		CDNUrl:             "",
+		Contents:           "",
+	}
+	var xmlBytesResp []byte
+	if xmlBytesResp, err = xml.Marshal(updateResponse); err != nil {
+		log.Printf("Could not encode XML response: %v", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.Header().Set("Content-type", "application/octet-stream;charset=UTF-8")
+	w.Write([]byte(base64.StdEncoding.EncodeToString(xmlBytesResp)))
+	log.Printf("Sent back 'already up-to-date' /CheckSWAutoUpdate.laf reply")
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	url := r.Header.Get("X-Forwarded-Proto") + "://" + r.Header.Get("X-Forwarded-Host") + r.URL.String()
 	log.Printf("Request: %s %v | %v", r.Method, url, r.Header)
 
+	// Prevent accidental DNS poisoning loops.
 	if strings.HasPrefix(r.Host, "127.") || strings.HasPrefix(r.Host, "localhost") {
 		w.WriteHeader(400)
 		return
@@ -187,20 +237,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Server-Timer", strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
 
 	if r.Method == "POST" && r.URL.Path == "/rest/sdp/v9.0/initservices" {
-		w.Header().Set("Content-Type", "application/json")
-		if bytes, err := json.Marshal(generateAuthentication()); err == nil {
-			w.Write(bytes)
-			log.Print("Sent back custom /initservices reply")
-		} else {
-			log.Printf("Error marshalling: %v", err)
-			w.WriteHeader(500)
-		}
+		generateInitServicesResponse(w, r)
 		return
 	}
 
-	if r.URL.Path == "/CheckSWAutoUpdate.laf" {
-		w.WriteHeader(400)
-		log.Print("Sent back custom /CheckSWAutoUpdate.laf reply")
+	if r.Method == "POST" && (
+		r.URL.Path == "/CheckSWAutoUpdate.laf" ||
+			r.URL.Path == "/CheckSWManualUpdate.laf") {
+		generateUpdateResponse(w, r)
 		return
 	}
 
