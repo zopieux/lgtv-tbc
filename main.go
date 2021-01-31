@@ -252,7 +252,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !*forward || blackholeList[r.Host] {
+	if !(*forward) || blackholeList[r.Host] {
 		w.WriteHeader(400)
 		return
 	}
@@ -290,6 +290,6 @@ func main() {
 		blackholeList[s] = true
 	}
 
-	log.Printf("Listening on %s", *addr)
+	log.Printf("Listening on %s (notify: %v, forward: %v)", *addr, *notify, *forward)
 	log.Fatal(http.ListenAndServe(*addr, http.HandlerFunc(handler)))
 }
