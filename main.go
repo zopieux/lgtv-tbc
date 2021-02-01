@@ -238,7 +238,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Milliseconds.
-	w.Header().Set("X-Server-Timer", strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
+	w.Header().Set("X-Server-Time", strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
 
 	if r.Method == "POST" && r.URL.Path == "/rest/sdp/v9.0/initservices" {
 		generateInitServicesResponse(w, r)
