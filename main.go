@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -22,6 +24,7 @@ var (
 	addr      = flag.String("addr", "", "Address to listen on")
 	notify    = flag.Bool("notify", false, "Whether to send a notification at startup")
 	forward   = flag.Bool("forward", true, "Whether to forward requests to upstream or blackhole traffic")
+	verbose   = flag.Bool("verbose", false, "Whether to log requests")
 	blackhole = flag.String("blackhole", "127.0.0.1,localhost", "Comma-separated hosts to blackhole")
 
 	blackholeList = map[string]bool{}
@@ -180,7 +183,7 @@ func generateAuthentication() *SdpAuthentication {
 	return auth
 }
 
-func generateInitServicesResponse(w http.ResponseWriter, r *http.Request) {
+func generateInitServicesResponse(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	if bytes, err := json.Marshal(generateAuthentication()); err == nil {
 		w.Write(bytes)
@@ -191,7 +194,7 @@ func generateInitServicesResponse(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func generateUpdateResponse(w http.ResponseWriter, r *http.Request) {
+func generateUpdateResponse(w http.ResponseWriter) {
 	timeLoc, err := time.LoadLocation("GMT")
 	if err != nil {
 		log.Printf("Could not load GTM TZ: %v", err)
@@ -227,9 +230,16 @@ func generateUpdateResponse(w http.ResponseWriter, r *http.Request) {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	var reqBody io.Reader
 
 	url := r.Header.Get("X-Forwarded-Proto") + "://" + r.Header.Get("X-Forwarded-Host") + r.URL.String()
-	log.Printf("Request: %s %v | %v", r.Method, url, r.Header)
+	if *verbose {
+		buf, _ := ioutil.ReadAll(r.Body)
+		reqBody = ioutil.NopCloser(bytes.NewBuffer(buf))
+		log.Printf("Request: %s %v | %v\n%s", r.Method, url, r.Header, string(buf))
+	} else {
+		reqBody = r.Body
+	}
 
 	// Prevent accidental DNS poisoning loops.
 	if strings.HasPrefix(r.Host, "127.") || strings.HasPrefix(r.Host, "localhost") {
@@ -241,14 +251,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Server-Time", strconv.FormatInt(time.Now().UnixNano()/1e6, 10))
 
 	if r.Method == "POST" && r.URL.Path == "/rest/sdp/v9.0/initservices" {
-		generateInitServicesResponse(w, r)
+		generateInitServicesResponse(w)
 		return
 	}
 
 	if r.Method == "POST" && (
 		r.URL.Path == "/CheckSWAutoUpdate.laf" ||
 			r.URL.Path == "/CheckSWManualUpdate.laf") {
-		generateUpdateResponse(w, r)
+		generateUpdateResponse(w)
 		return
 	}
 
@@ -257,7 +267,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, err := http.NewRequestWithContext(context.Background(), r.Method, url, r.Body)
+	request, err := http.NewRequestWithContext(context.Background(), r.Method, url, reqBody)
 	if err != nil {
 		log.Printf("Error creating upstream request: %v", err)
 		w.WriteHeader(500)
@@ -269,7 +279,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	}
-	log.Printf("Upstream response: %d | %v", response.StatusCode, response.Header)
+	if *verbose {
+		log.Printf("Upstream response: %d | %v", response.StatusCode, response.Header)
+	}
 	w.WriteHeader(response.StatusCode)
 	for key, value := range response.Header {
 		if key == "X-Real-IP" || key == "Connection" || strings.HasPrefix(key, "X-Forward") {
