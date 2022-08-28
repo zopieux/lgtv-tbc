@@ -66,7 +66,7 @@ The instructions below are not completely copy-pastable, you'll need some fair a
    ```
 
 1. Create a self-signed certificate for the poisoned domains. It will be invalid, since you obviously cannot emit 
-   genuine certificates for LG-controlled domains. If you do, please ask your management to stop creating privacy-invading 
+   genuine certificates for LG-controlled domains. If *you* can, please ask your management to stop creating privacy-invading 
    walled gardens and allow people who buy LG TVs to use them as they see fit.
    We're lucky here as webOS *does not validate the certificate* for these particular start-up requests, allowing us 
    to intercept and replace the replies.
